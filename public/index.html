@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Scam Check</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #5d6677;
+    --border: #dde1e8; --accent: #2f5bea;
+    --red: #c62828; --red-bg: #fdecec;
+    --amber: #a86400; --amber-bg: #fff4e0;
+    --green: #2e7d32; --green-bg: #e9f6ea;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.5;
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 32px 18px 48px; }
+  h1 { margin: 0 0 4px; font-size: 1.8rem; }
+  .sub { margin: 0 0 24px; color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+  textarea {
+    width: 100%; min-height: 160px; padding: 12px; font: inherit; font-size: 1rem;
+    border: 1px solid var(--border); border-radius: 8px; resize: vertical;
+  }
+  textarea:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  .row { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; gap: 12px; }
+  .count { font-size: 0.85rem; color: var(--muted); }
+  button {
+    background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+    padding: 12px 22px; font-size: 1rem; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: 0.6; cursor: wait; }
+  #result { margin-top: 20px; display: none; }
+  .verdict { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-radius: 10px; font-weight: 700; font-size: 1.2rem; }
+  .verdict.scam { background: var(--red-bg); color: var(--red); }
+  .verdict.suspicious { background: var(--amber-bg); color: var(--amber); }
+  .verdict.safe { background: var(--green-bg); color: var(--green); }
+  .score { font-size: 0.95rem; font-weight: 600; }
+  h2 { font-size: 1rem; margin: 18px 0 6px; }
+  ul { margin: 0; padding-left: 20px; }
+  li { margin-bottom: 4px; }
+  .error { color: var(--red); margin-top: 12px; }
+  footer { margin-top: 28px; font-size: 0.85rem; color: var(--muted); }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Scam Check</h1>
+  <p class="sub">Paste a text, email or message you received. We'll tell you if it looks like a scam.</p>
+
+  <div class="card">
+    <label for="msg" class="sub" style="display:block;margin:0 0 8px;">Message</label>
+    <textarea id="msg" maxlength="4000" placeholder="e.g. USPS: Your package is on hold due to an unpaid fee. Pay now at usps-redelivery-help.com"></textarea>
+    <div class="row">
+      <span class="count" id="count">0 / 4000</span>
+      <button id="btn">Check message</button>
+    </div>
+    <div class="error" id="error" role="alert"></div>
+  </div>
+
+  <div id="result" class="card" aria-live="polite">
+    <div id="verdict" class="verdict"><span id="verdictText"></span><span class="score" id="score"></span></div>
+    <p id="summary"></p>
+    <div id="flagsWrap"><h2>Red flags</h2><ul id="flags"></ul></div>
+    <h2>What to do</h2>
+    <ul id="todo"></ul>
+  </div>
+
+  <footer>
+    Scam Check is an AI tool and can make mistakes. When in doubt, contact the company directly using a number or website you already trust.
+    Report scams at <a href="https://reportfraud.ftc.gov" target="_blank" rel="noopener">reportfraud.ftc.gov</a>.
+    Don't paste passwords, full card numbers or other sensitive details.
+  </footer>
+</main>
+
+<script>
+  const msg = document.getElementById("msg");
+  const btn = document.getElementById("btn");
+  const errorEl = document.getElementById("error");
+  const result = document.getElementById("result");
+
+  msg.addEventListener("input", () => {
+    document.getElementById("count").textContent = `${msg.value.length} / 4000`;
+  });
+
+  function fillList(id, items) {
+    const ul = document.getElementById(id);
+    ul.innerHTML = "";
+    (items || []).forEach((t) => {
+      const li = document.createElement("li");
+      li.textContent = t;
+      ul.appendChild(li);
+    });
+  }
+
+  btn.addEventListener("click", async () => {
+    errorEl.textContent = "";
+    const text = msg.value.trim();
+    if (!text) { errorEl.textContent = "Please paste a message first."; return; }
+
+    btn.disabled = true;
+    btn.textContent = "Checking…";
+    result.style.display = "none";
+
+    try {
+      const res = await fetch("/api/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Something went wrong.");
+
+      const v = (data.verdict || "").toLowerCase();
+      const cls = v.includes("scam") ? "scam" : v.includes("suspicious") ? "suspicious" : "safe";
+      document.getElementById("verdict").className = `verdict ${cls}`;
+      document.getElementById("verdictText").textContent = data.verdict || "Result";
+      document.getElementById("score").textContent =
+        typeof data.risk_score === "number" ? `Risk ${data.risk_score}/100` : "";
+      document.getElementById("summary").textContent = data.summary || "";
+      fillList("flags", data.red_flags);
+      document.getElementById("flagsWrap").style.display =
+        data.red_flags && data.red_flags.length ? "block" : "none";
+      fillList("todo", data.what_to_do);
+      result.style.display = "block";
+      result.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (e) {
+      errorEl.textContent = e.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Check message";
+    }
+  });
+</script>
+</body>
+</html>
